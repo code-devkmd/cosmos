@@ -1,8 +1,12 @@
 # COSMOS — NASA Space Archive Explorer
 
+![Cosmos UI](public/screenshot/homepage.png)
+
 COSMOS is a responsive React web app for exploring NASA's public media archive. Search for space imagery, videos, and audio; open asset details; and save discoveries locally for later.
 
 ## Features
+
+![Cosmos search](public/screenshot/search.png)
 
 - Search NASA's public Images API by keyword.
 - Filter results by images, videos, or audio.

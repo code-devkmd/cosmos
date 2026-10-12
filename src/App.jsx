@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import "./App.css";
 
@@ -14,6 +14,8 @@ import { getItemInfo } from "./lib/nasa.js";
 
 import { readSavedItems, writeSavedItems } from "./lib/storage.js";
 
+const PAGE_SIZE = 12;
+
 export default function App() {
 	const [query, setQuery] = useState("");
 
@@ -25,13 +27,11 @@ export default function App() {
 
 	const [loading, setLoading] = useState(false);
 
-	const [loadingMore, setLoadingMore] = useState(false);
-
 	const [error, setError] = useState("");
 
 	const [page, setPage] = useState(1);
 
-	const [hasMore, setHasMore] = useState(false);
+	const [totalHits, setTotalHits] = useState(0);
 
 	const [savedItems, setSavedItems] = useState(readSavedItems);
 
@@ -40,25 +40,36 @@ export default function App() {
 	const [selectedItem, setSelectedItem] = useState(null);
 
 	const [assetData, setAssetData] = useState(null);
+	const resultsSectionRef = useRef(null);
 
 	const savedIds = new Set(savedItems.map((item) => getItemInfo(item).id));
 
-	const visibleItems = showSaved ? savedItems : results;
+	const totalPages = showSaved
+		? Math.max(1, Math.ceil(savedItems.length / PAGE_SIZE))
+		: Math.max(1, Math.ceil(totalHits / PAGE_SIZE));
+	const visibleItems = showSaved
+		? savedItems.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+		: results;
+	const pageWindowStart = Math.max(1, Math.min(page - 2, totalPages - 4));
+	const pageNumbers = Array.from(
+		{ length: Math.min(totalPages, 5) },
+		(_, index) => pageWindowStart + index,
+	);
+
+	const scrollToResults = () =>
+		resultsSectionRef.current?.scrollIntoView({
+			behavior: "smooth",
+			block: "start",
+		});
 
 	const search = async (term, type = mediaType, nextPage = 1) => {
 		const cleanTerm = term.trim();
 
 		if (!cleanTerm) return;
 
-		if (nextPage === 1) {
-			setLoading(true);
-
-			setResults([]);
-
-			setShowSaved(false);
-		} else {
-			setLoadingMore(true);
-		}
+		setLoading(true);
+		setResults([]);
+		setShowSaved(false);
 
 		setError("");
 
@@ -73,6 +84,7 @@ export default function App() {
 				media_type: type,
 
 				page: String(nextPage),
+				page_size: String(PAGE_SIZE),
 			});
 
 			const response = await fetch(`${NASA_SEARCH_URL}?${params}`);
@@ -88,22 +100,16 @@ export default function App() {
 
 			const items = collection.items || [];
 
-			setResults((current) =>
-				nextPage === 1 ? items : [...current, ...items],
-			);
-
-			const totalHits = Number(collection.metadata?.total_hits || 0);
-
-			setHasMore(nextPage * 100 < totalHits && items.length > 0);
+			setResults(items);
+			setTotalHits(Number(collection.metadata?.total_hits || 0));
 		} catch (searchError) {
+			setTotalHits(0);
 			setError(
 				searchError.message ||
 					"We couldn't reach the NASA image library. Please try again.",
 			);
 		} finally {
 			setLoading(false);
-
-			setLoadingMore(false);
 		}
 	};
 
@@ -111,6 +117,7 @@ export default function App() {
 		event.preventDefault();
 
 		search(query);
+		scrollToResults();
 	};
 
 	const selectMediaType = (type) => {
@@ -131,6 +138,24 @@ export default function App() {
 
 			return next;
 		});
+	};
+
+	const handleSavedNavigation = () => {
+		if (showSaved) {
+			setShowSaved(false);
+			if (submittedQuery) search(submittedQuery, mediaType, 1);
+			else setPage(1);
+		} else {
+			setShowSaved(true);
+			setPage(1);
+		}
+		scrollToResults();
+	};
+
+	const goToPage = (nextPage) => {
+		if (nextPage < 1 || nextPage > totalPages || nextPage === page) return;
+		if (showSaved) setPage(nextPage);
+		else search(submittedQuery, mediaType, nextPage);
 	};
 
 	useEffect(() => {
@@ -188,9 +213,12 @@ export default function App() {
 		assetData?.id !== activeInfo.id,
 	);
 
-	const playableAsset = assetUrls.find((url) =>
-		/\\.(mp4|webm|mp3|wav|m4a)(\\?|$)/i.test(url),
+	const playableAssets = assetUrls.filter((url) =>
+		/\.(mp4|webm|mp3|wav|m4a)(\?|$)/i.test(url),
 	);
+	const playableAsset =
+		playableAssets.find((url) => /~(small|medium|large)\./i.test(url)) ||
+		playableAssets[0];
 
 	const isAudio = activeInfo?.mediaType === "audio";
 
@@ -200,9 +228,7 @@ export default function App() {
 
 			<header className="topbar">
 				<a className="brand" href="#top" aria-label="Cosmos home">
-					<span className="brand-mark">
-						<span />
-					</span>
+					<img className="brand-image" src="/icon.png" alt="" />
 
 					<span>
 						COSMOS<span className="brand-dot">.</span>
@@ -216,7 +242,7 @@ export default function App() {
 
 					<button
 						className={`saved-nav ${showSaved ? "is-active" : ""}`}
-						onClick={() => setShowSaved((value) => !value)}
+						onClick={handleSavedNavigation}
 					>
 						<Icon name="bookmark" size={16} /> Saved{" "}
 						<span>{savedItems.length}</span>
@@ -347,6 +373,7 @@ export default function App() {
 										setQuery(topic);
 
 										search(topic);
+										scrollToResults();
 									}}
 								>
 									{topic}
@@ -358,7 +385,12 @@ export default function App() {
 					</div>
 				</section>
 
-				<section className="results-section" aria-live="polite">
+				<section
+					className="results-section"
+					id="results"
+					ref={resultsSectionRef}
+					aria-live="polite"
+				>
 					<div className="results-heading">
 						<div>
 							<p className="eyebrow">
@@ -384,8 +416,8 @@ export default function App() {
 
 						{!showSaved && submittedQuery && !loading && (
 							<span className="results-count">
-								{results.length}{" "}
-								{results.length === 1 ? "discovery" : "discoveries"}
+								{totalHits.toLocaleString()}{" "}
+								{totalHits === 1 ? "discovery" : "discoveries"}
 							</span>
 						)}
 					</div>
@@ -444,7 +476,9 @@ export default function App() {
 													className="card-image"
 													src={info.preview}
 													alt=""
-													loading="lazy"
+													loading={index < 3 ? "eager" : "lazy"}
+													decoding="async"
+													fetchPriority={index < 3 ? "high" : "auto"}
 												/>
 											) : (
 												<div className={`media-placeholder ${info.mediaType}`}>
@@ -542,19 +576,42 @@ export default function App() {
 						</div>
 					)}
 
-					{!showSaved && !loading && hasMore && (
-						<div className="load-more-wrap">
+					{!loading && visibleItems.length > 0 && totalPages > 1 && (
+						<nav className="pagination" aria-label="Search result pages">
 							<button
-								className="load-more"
+								className="page-control"
 								type="button"
-								disabled={loadingMore}
-								onClick={() => search(submittedQuery, mediaType, page + 1)}
+								aria-label="Previous page"
+								disabled={page === 1 || loading}
+								onClick={() => goToPage(page - 1)}
 							>
-								{loadingMore ? "Finding more…" : "Keep exploring"}
-
-								<Icon name="arrow" size={17} />
+								← <span>Previous</span>
 							</button>
-						</div>
+							<div className="page-numbers">
+								{pageNumbers.map((pageNumber) => (
+									<button
+										key={pageNumber}
+										className={`page-number ${pageNumber === page ? "is-current" : ""}`}
+										type="button"
+										aria-label={`Page ${pageNumber}`}
+										aria-current={pageNumber === page ? "page" : undefined}
+										disabled={loading}
+										onClick={() => goToPage(pageNumber)}
+									>
+										{pageNumber}
+									</button>
+								))}
+							</div>
+							<button
+								className="page-control"
+								type="button"
+								aria-label="Next page"
+								disabled={page === totalPages || loading}
+								onClick={() => goToPage(page + 1)}
+							>
+								<span>Next</span> →
+							</button>
+						</nav>
 					)}
 				</section>
 
@@ -580,9 +637,7 @@ export default function App() {
 
 			<footer className="site-footer">
 				<a className="brand footer-brand" href="#top">
-					<span className="brand-mark">
-						<span />
-					</span>
+					<img className="brand-image" src="/icon.png" alt="" />
 
 					<span>
 						COSMOS<span className="brand-dot">.</span>
@@ -631,6 +686,7 @@ export default function App() {
 									controls
 									autoPlay
 									playsInline
+									preload="metadata"
 									poster={activeInfo.preview}
 								>
 									<source src={playableAsset} />
